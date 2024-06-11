@@ -1,0 +1,123 @@
+const User = require("../models/user");
+const bcrypt = require("bcrypt");
+const jwt = require("jsonwebtoken");
+const errorHandler = require("../utils/errorHandler");
+const sendEmail = require("../utils/mailer");
+
+exports.register = async (req, res) => {
+  try {
+    const existingUser = await User.findOne({
+      where: { email: req.body.email },
+    });
+
+    if (existingUser) {
+      return res.status(400).json("Error: User already exists");
+    }
+
+    const hash = await bcrypt.hash(req.body.password, 10);
+
+    const user = await User.create({
+      email: req.body.email,
+      password: hash,
+      firstName: req.body.firstName,
+      lastName: req.body.lastName,
+      street: req.body.street,
+      buildingNumber: req.body.buildingNumber,
+      apartmentNumber: req.body.apartmentNumber,
+      city: req.body.city,
+      postalCode: req.body.postalCode,
+      nip: req.body.nip,
+      regon: req.body.regon,
+      role: req.body.role,
+    });
+
+    const activationToken = jwt.sign(
+      { id: newUser.id },
+      process.env.JWT_SECRET,
+      { expiresIn: "1h" }
+    );
+
+    await sendEmail({
+      email: newUser.email,
+      subject: "Activate your account",
+      message: `Click this link to activate your account: ${
+        req.protocol
+      }://${req.get("host")}/api/users/activate/${activationToken}`,
+    });
+
+    res.status(200).json(user);
+  } catch (err) {
+    errorHandler(err, req, res);
+  }
+};
+
+exports.login = async (req, res) => {
+  try {
+    const user = await User.findOne({ where: { email: req.body.email } });
+
+    if (!user) {
+      return res.status(400).json("Error: User does not exist");
+    }
+
+    const match = await bcrypt.compare(req.body.password, user.password);
+
+    if (!match) {
+      return res.status(400).json("Error: Invalid password");
+    }
+
+    const accessToken = jwt.sign(
+      { id: user.id },
+      process.env.ACCESS_TOKEN_SECRET,
+      { expiresIn: "15m" }
+    );
+    const refreshToken = jwt.sign(
+      { id: user.id },
+      process.env.REFRESH_TOKEN_SECRET,
+      { expiresIn: "7d" }
+    );
+
+    user.refreshToken = refreshToken;
+    await user.save();
+
+    res.json({ user, accessToken, refreshToken });
+  } catch (err) {
+    errorHandler(err, req, res);
+  }
+};
+
+exports.updateUser = async (req, res) => {
+  try {
+    const user = await User.findOne({ where: { id: req.params.id } });
+
+    if (!user) {
+      return res.status(400).json("Error: User does not exist");
+    }
+
+    const updatedUser = await user.update(req.body);
+
+    res.json(updatedUser);
+  } catch (err) {
+    errorHandler(err, req, res);
+  }
+};
+
+exports.activateAccount = async (req, res) => {
+  try {
+    const decoded = jwt.verify(req.params.token, process.env.JWT_SECRET);
+
+    await User.update({ isActive: true }, { where: { id: decoded.id } });
+
+    res.status(200).json({ message: "Account activated successfully." });
+  } catch (err) {
+    errorHandler(err, req, res);
+  }
+};
+
+exports.getAllUsers = async (req, res) => {
+  try {
+    const users = await User.findAll();
+    res.json({ users, accessToken: req.accessToken });
+  } catch (err) {
+    errorHandler(err, req, res);
+  }
+};
